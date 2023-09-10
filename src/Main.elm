@@ -3,7 +3,7 @@ module Main exposing (Flags, Model, Msg, main)
 import Browser
 import Browser.Dom
 import Browser.Events exposing (onAnimationFrameDelta)
-import Canvas exposing (group, lineTo, path, rect, shapes)
+import Canvas exposing (Point, circle, shapes)
 import Canvas.Settings exposing (fill)
 import Color
 import Html exposing (Html)
@@ -17,15 +17,9 @@ type alias Flags =
 
 type alias Model =
     { now : Float
+    , point : Point
     , width : Int
     , height : Int
-    }
-
-
-type alias FloatModel =
-    { now : Float
-    , width : Float
-    , height : Float
     }
 
 
@@ -50,6 +44,7 @@ init _ =
         model : Model
         model =
             { now = 0
+            , point = ( 0, 0 )
             , width = 1
             , height = 1
             }
@@ -65,11 +60,27 @@ init _ =
     )
 
 
+stepsPerTick : number
+stepsPerTick =
+    10000
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Frame dt ->
-            ( { model | now = model.now + dt / 1000 }, Cmd.none )
+            ( { model
+                | now = model.now + dt / 1000
+                , point =
+                    List.range 0 1000
+                        |> List.foldl
+                            (\e p ->
+                                move model (toFloat e + model.now) p
+                            )
+                            model.point
+              }
+            , Cmd.none
+            )
 
         Size width height ->
             ( { model
@@ -80,199 +91,113 @@ update msg model =
             )
 
 
+move : Model -> Float -> Point -> Point
+move { width, height } now ( x, y ) =
+    let
+        crimp : Float -> Float -> Float -> Float
+        crimp low high v =
+            if v < low then
+                high
+
+            else if v > high then
+                low
+
+            else
+                v
+    in
+    ( crimp
+        (toFloat -width / toFloat height)
+        (toFloat width / toFloat height)
+        (x + 0.005 * cos (random now))
+    , crimp
+        -1
+        1
+        (y + 0.005 * sin (random now))
+    )
+
+
+random : Float -> Float
+random now =
+    7643 * sin (7649 * now)
+
+
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.batch
-        [ onAnimationFrameDelta Frame
-        , Browser.Events.onResize Size
+        [ Browser.Events.onResize Size
+        , onAnimationFrameDelta Frame
         ]
 
 
 view : Model -> Html Msg
 view ({ width, height } as model) =
-    let
-        floatModel : FloatModel
-        floatModel =
-            toFloatModel model
-    in
     Canvas.toHtml
         ( width, height )
         [ Html.Attributes.style "height" "100vh"
         , Html.Attributes.style "width" "100vw"
         ]
-        [ clearScreen floatModel
-        , render floatModel
+        [ render model
         ]
 
 
-toFloatModel : Model -> FloatModel
-toFloatModel model =
-    { now = model.now
-    , width = toFloat model.width
-    , height = toFloat model.height
-    }
-
-
-clearScreen : FloatModel -> Canvas.Renderable
-clearScreen { width, height } =
-    shapes [ fill Color.white ] [ rect ( 0, 0 ) width height ]
-
-
-render : FloatModel -> Canvas.Renderable
-render { width, height } =
+render : Model -> Canvas.Renderable
+render model =
     let
-        count : number
-        count =
-            11
+        width : Float
+        width =
+            toFloat model.width
 
-        rectSize : Float
-        rectSize =
-            toFloat <| ceiling <| minSize / count
+        height : Float
+        height =
+            toFloat model.height
+
+        pointSize : Float
+        pointSize =
+            minSize * 0.002
 
         minSize : Float
         minSize =
-            min width height - 20
+            max 1 <| min width height - 20
 
-        centerX : Float
-        centerX =
-            width / 2
+        hue : Float
+        hue =
+            (137 / 1521) * (toFloat <| floor (model.now / 5))
 
-        centerY : Float
-        centerY =
-            height / 2
-
-        snubSquares : List Canvas.Renderable
-        snubSquares =
-            List.range 0 (count - 1)
-                |> List.map
-                    (\xi ->
-                        List.range 0 (count - 1)
-                            |> List.map (\yi -> snubSquare xi yi)
-                            |> group []
-                    )
-
-        snubSquare : Int -> Int -> Canvas.Renderable
-        snubSquare xi yi =
-            let
-                p : Float -> Float -> ( Float, Float )
-                p dx dy =
-                    ( reproject
-                        0
-                        (count - 1)
-                        (centerX - minSize / 2)
-                        (centerX + minSize / 2 - rectSize)
-                        xi
-                        + dx
-                        * rectSize
-                    , reproject
-                        0
-                        (count - 1)
-                        (centerY - minSize / 2)
-                        (centerY + minSize / 2 - rectSize)
-                        yi
-                        + dy
-                        * rectSize
-                    )
-            in
-            [ path (p 0 0.25)
-                [ lineTo <| p 0.25 0
-                , lineTo <| p 0.75 0
-                , lineTo <| p 1 0.25
-                , lineTo <| p 1 0.75
-                , lineTo <| p 0.75 1
-                , lineTo <| p 0.25 1
-                , lineTo <| p 0 0.75
-                ]
+        circles : ( Float, Float ) -> List Canvas.Shape
+        circles ( x, y ) =
+            [ circle
+                ( reproject (-width / height) (width / height) 0 width x
+                , reproject -1 1 0 height y
+                )
+                pointSize
+            , circle
+                ( reproject (-width / height) (width / height) 0 width -x
+                , reproject -1 1 0 height y
+                )
+                pointSize
             ]
-                |> shapes
-                    [ fill
-                        (if modBy 2 (xi + yi) == 0 then
-                            Color.lightCharcoal
-
-                         else
-                            Color.charcoal
-                        )
-                    ]
-
-        distorters : List Canvas.Renderable
-        distorters =
-            List.range 0 (count - 2)
-                |> List.map
-                    (\xi ->
-                        List.range 0 (count - 2)
-                            |> List.map (\yi -> distorter xi yi)
-                            |> group []
-                    )
-
-        distorter : Int -> Int -> Canvas.Renderable
-        distorter xi yi =
-            let
-                p : Float -> Float -> ( Float, Float )
-                p dx dy =
-                    ( reproject
-                        0
-                        (count - 2)
-                        (centerX - minSize / 2 + rectSize)
-                        (centerX + minSize / 2 - rectSize)
-                        xi
-                        + dx
-                        * rectSize
-                    , reproject
-                        0
-                        (count - 2)
-                        (centerY - minSize / 2 + rectSize)
-                        (centerY + minSize / 2 - rectSize)
-                        yi
-                        + dy
-                        * rectSize
-                    )
-
-                sign_ : Int -> Int
-                sign_ q =
-                    if q >= count // 2 then
-                        1
-
-                    else
-                        0
-
-                ( color, otherColor ) =
-                    if modBy 2 (xi + yi + sign_ xi + sign_ yi) == 0 then
-                        ( Color.black, Color.white )
-
-                    else
-                        ( Color.white, Color.black )
-            in
-            [ [ path (p 0 0)
-                    [ lineTo <| p (-0.25 + 0.125) 0.125
-                    , lineTo <| p -0.25 0
-                    , lineTo <| p (-0.25 + 0.125) -0.125
-                    ]
-              , path (p 0 0)
-                    [ lineTo <| p (0.25 - 0.125) 0.125
-                    , lineTo <| p 0.25 0
-                    , lineTo <| p (0.25 - 0.125) -0.125
-                    ]
-              ]
-                |> shapes [ fill color ]
-            , [ path (p 0 0)
-                    [ lineTo <| p 0.125 (-0.25 + 0.125)
-                    , lineTo <| p 0 -0.25
-                    , lineTo <| p -0.125 (-0.25 + 0.125)
-                    ]
-              , path (p 0 0)
-                    [ lineTo <| p 0.125 (0.25 - 0.125)
-                    , lineTo <| p 0 0.25
-                    , lineTo <| p -0.125 (0.25 - 0.125)
-                    ]
-              ]
-                |> shapes [ fill otherColor ]
-            ]
-                |> group []
     in
-    (snubSquares ++ distorters)
-        |> group []
+    List.range 0 stepsPerTick
+        |> List.foldl
+            (\e ( p, acc ) ->
+                let
+                    newP : Point
+                    newP =
+                        move model (toFloat e + model.now) p
+                in
+                ( newP, circles newP ++ acc )
+            )
+            ( model.point, [] )
+        |> Tuple.second
+        |> shapes
+            [ fill <|
+                Color.hsl
+                    (hue - toFloat (ceiling hue))
+                    0.8
+                    0.8
+            ]
 
 
-reproject : Float -> Float -> Float -> Float -> Int -> Float
+reproject : Float -> Float -> Float -> Float -> Float -> Float
 reproject fromMin fromMax toMin toMax value =
-    (toFloat value - fromMin) / (fromMax - fromMin) * (toMax - toMin) + toMin
+    (value - fromMin) / (fromMax - fromMin) * (toMax - toMin) + toMin
