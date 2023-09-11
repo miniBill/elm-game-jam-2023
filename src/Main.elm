@@ -9,7 +9,7 @@ import Color
 import Direction3d
 import Duration exposing (Duration, Seconds)
 import Html exposing (Html)
-import Length exposing (Length, Meters)
+import Length exposing (Meters)
 import Pixels
 import Point3d
 import Quantity exposing (Quantity, Rate)
@@ -18,6 +18,7 @@ import Scene3d exposing (Entity)
 import Scene3d.Material as Material exposing (Material)
 import Sphere3d exposing (Sphere3d)
 import Task
+import Vector3d
 import Viewpoint3d
 
 
@@ -59,7 +60,7 @@ init _ =
     let
         generator : Random.Generator (List Point)
         generator =
-            Random.list 1000 pointGenerator
+            Random.list 100 pointGenerator
 
         pointGenerator : Random.Generator Point
         pointGenerator =
@@ -94,26 +95,34 @@ init _ =
 
 
 view : Model -> Html msg
-view { elapsed, points, width, height } =
+view { elapsed, width, height, points } =
+    let
+        size : Int
+        size =
+            min width height
+    in
     Scene3d.sunny
         { upDirection = Direction3d.positiveZ
         , sunlightDirection = Direction3d.xyZ Quantity.zero (Angle.degrees -85)
         , shadows = True
-        , dimensions = ( Pixels.pixels width, Pixels.pixels height )
+        , dimensions =
+            ( Pixels.pixels size
+            , Pixels.pixels size
+            )
         , camera =
             Camera3d.perspective
                 { viewpoint =
                     let
                         rotationRate : Quantity Float (Rate Radians Seconds)
                         rotationRate =
-                            Angle.degrees 90
+                            Angle.degrees 45
                                 |> Quantity.per Duration.second
                     in
                     Viewpoint3d.orbitZ
                         { azimuth = Quantity.at rotationRate elapsed
                         , elevation = Angle.degrees 45
                         , focalPoint = Point3d.origin
-                        , distance = Length.meters 10
+                        , distance = Length.meters 15
                         }
                 , verticalFieldOfView = Angle.degrees 30
                 }
@@ -123,7 +132,22 @@ view { elapsed, points, width, height } =
         }
 
 
-viewPoint : Point -> Entity Length
+pointSphere : Entity coordinates
+pointSphere =
+    let
+        texture : Material coordinates { a | normals : () }
+        texture =
+            Material.matte Color.red
+
+        sphere : Sphere3d Meters coordinates
+        sphere =
+            Sphere3d.atOrigin
+                (Length.centimeters 5)
+    in
+    Scene3d.sphereWithShadow texture sphere
+
+
+viewPoint : Point -> Entity coordinates
 viewPoint point =
     let
         sphereRadius : number
@@ -141,32 +165,26 @@ viewPoint point =
         z : Float
         z =
             sphereRadius * sin point.latitude
-
-        texture : Material coordinates { a | normals : () }
-        texture =
-            Material.matte Color.red
-
-        sphere : Sphere3d Meters coordinates
-        sphere =
-            Sphere3d.atPoint
-                (Point3d.meters x y z)
-                (Length.centimeters 5)
     in
-    Scene3d.sphereWithShadow texture sphere
+    pointSphere
+        |> Scene3d.translateBy (Vector3d.meters x y z)
 
 
 update : Msg -> Model -> ( Model, Cmd msg )
 update msg model =
-    case msg of
-        Frame dt ->
-            ( { model
-                | elapsed = model.elapsed |> Quantity.plus (Duration.milliseconds dt)
-              }
-            , Cmd.none
-            )
+    let
+        newModel : Model
+        newModel =
+            case msg of
+                Frame dt ->
+                    { model
+                        | elapsed = model.elapsed |> Quantity.plus (Duration.milliseconds dt)
+                    }
 
-        Resize width height ->
-            ( { model | width = width, height = height }, Cmd.none )
+                Resize width height ->
+                    { model | width = width, height = height }
+    in
+    ( newModel, Cmd.none )
 
 
 subscriptions : Model -> Sub Msg
